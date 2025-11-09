@@ -1,31 +1,22 @@
 import os
 import telebot
+from flask import Flask, request
 from PIL import Image, ImageOps
 import io
 from docx import Document
 from docx.shared import Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from flask import Flask
+import tempfile
 import threading
 
 # Получаем токен из переменных окружения Railway
-TOKEN = os.environ.get('BOT_TOKEN', '8204855927:AAE6WxvaZl-kqM3zbSRql1J_dr1l1NteYeA')
+TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', "8204855927:AAE6WxvaZl-kqM3zbSRql1J_dr1l1NteYeA")
 
 bot = telebot.TeleBot(TOKEN)
+app = Flask(__name__)
 user_sessions = {}
 
-# Создаем Flask приложение для Railway
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "🤖 Бот работает! Статус: активен"
-
-# Запускаем Flask в отдельном потоке
-def run_flask():
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
-
+# Ваш существующий код функций (оставляем без изменений)
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
@@ -74,6 +65,28 @@ def help_cmd(message):
 • 📝 DOCX - можно редактировать, добавлять текст
 """
     bot.send_message(message.chat.id, help_text)
+
+@bot.message_handler(commands=['format'])
+def choose_format(message):
+    user_id = message.from_user.id
+    if user_id not in user_sessions:
+        user_sessions[user_id] = {'photos': [], 'format': 'pdf'}
+
+    current_format = user_sessions[user_id]['format']
+    current_format_name = "PDF" if current_format == 'pdf' else "DOCX"
+
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    btn_pdf = telebot.types.KeyboardButton('📄 PDF')
+    btn_docx = telebot.types.KeyboardButton('📝 DOCX')
+    btn_back = telebot.types.KeyboardButton('Назад')
+    markup.add(btn_pdf, btn_docx, btn_back)
+
+    bot.send_message(
+        message.chat.id,
+        f"🎯 Текущий формат: {current_format_name}\n\n"
+        f"Выбери новый формат документа:",
+        reply_markup=markup
+    )
 
 @bot.message_handler(func=lambda message: message.text in ['📄 PDF', '📝 DOCX', 'Назад'])
 def handle_format_choice(message):
@@ -230,7 +243,6 @@ def create_docx(photos_bytes):
 
             img_width, img_height = img.size
             aspect_ratio = img_height / img_width
-
             page_aspect_ratio = content_height / content_width
 
             if aspect_ratio > page_aspect_ratio:
@@ -310,18 +322,49 @@ def handle_other_messages(message):
     else:
         show_main_menu(message)
 
-# Запуск бота и веб-сервера
-if __name__ == "__main__":
-    print("🚀 Бот запускается на Railway...")
+# Новый код для Railway
+@app.route('/')
+def home():
+    return "🤖 Telegram Bot is running! Use /start in Telegram."
+
+@app.route('/health')
+def health():
+    return "OK"
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return ''
+    else:
+        return 'Invalid content type', 403
+
+def set_webhook():
+    # Устанавливаем вебхук для Railway
+    webhook_url = f"https://{os.environ.get('RAILWAY_STATIC_URL', '')}/webhook"
+    if webhook_url.startswith('https://'):
+        bot.remove_webhook()
+        bot.set_webhook(url=webhook_url)
+        print(f"Webhook set to: {webhook_url}")
+    else:
+        print("Using polling mode")
+
+def run_bot():
+    """Запускает бота в режиме polling (как запасной вариант)"""
+    print("🚀 Бот запущен в режиме polling!")
     print("📸 Форматы: PDF и DOCX")
-    
-    # Запускаем Flask в отдельном потоке
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
-    
-    # Запускаем бота
     try:
-        bot.polling(none_stop=True)
+        bot.infinity_polling()
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка в боте: {e}")
+
+if __name__ == '__main__':
+    # Пытаемся установить вебхук, если доступен URL
+    set_webhook()
+    
+    # Запускаем Flask приложение
+    port = int(os.environ.get('PORT', 5000))
+    print(f"Starting server on port {port}")
+    app.run(host='0.0.0.0', port=port)
