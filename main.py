@@ -7,7 +7,6 @@ import io
 from docx import Document
 from docx.shared import Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-import time
 
 # Получаем токен из переменных окружения Railway
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', "8204855927:AAE6WxvaZl-kqM3zbSRql1J_dr1l1NteYeA")
@@ -16,12 +15,12 @@ bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 user_sessions = {}
 
-# Добавляем счетчик для порядка фото
+# Ваши существующие функции (без изменений)
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
     if user_id not in user_sessions:
-        user_sessions[user_id] = {'photos': [], 'format': 'pdf', 'photo_counter': 0}
+        user_sessions[user_id] = {'photos': [], 'format': 'pdf'}
 
     current_format = user_sessions[user_id]['format']
     format_name = "PDF" if current_format == 'pdf' else "DOCX"
@@ -56,28 +55,17 @@ def help_cmd(message):
 """
     bot.send_message(message.chat.id, help_text)
 
-# Изменяем обработчик фото - добавляем порядковый номер
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     user_id = message.from_user.id
 
     if user_id not in user_sessions:
-        user_sessions[user_id] = {'photos': [], 'format': 'pdf', 'photo_counter': 0}
+        user_sessions[user_id] = {'photos': [], 'format': 'pdf'}
 
-    # Увеличиваем счетчик для каждого нового фото
-    user_sessions[user_id]['photo_counter'] += 1
-    order_number = user_sessions[user_id]['photo_counter']
-    
     file_info = bot.get_file(message.photo[-1].file_id)
     downloaded_file = bot.download_file(file_info.file_path)
 
-    # Сохраняем фото с порядковым номером и временем получения
-    user_sessions[user_id]['photos'].append({
-        'data': downloaded_file,
-        'order': order_number,
-        'timestamp': time.time()
-    })
-    
+    user_sessions[user_id]['photos'].append(downloaded_file)
     count = len(user_sessions[user_id]['photos'])
     format_name = "PDF" if user_sessions[user_id]['format'] == 'pdf' else "DOCX"
 
@@ -100,22 +88,16 @@ def create_document(message):
         bot.send_message(message.chat.id, "🔄 Создаю документ...")
 
         format_type = user_sessions[user_id]['format']
-        
-        # Сортируем фото по порядку добавления
-        sorted_photos = sorted(user_sessions[user_id]['photos'], 
-                             key=lambda x: x['order'])
-        
-        # Извлекаем только данные фото
-        photos_data = [photo['data'] for photo in sorted_photos]
+        photos = user_sessions[user_id]['photos']
 
         if format_type == 'pdf':
-            file_buffer = create_pdf(photos_data)
+            file_buffer = create_pdf(photos)
             file_name = "photos.pdf"
-            caption = f"📄 Ваш PDF файл готов!\nСтраниц: {len(photos_data)}"
+            caption = f"📄 Ваш PDF файл готов!\nСтраниц: {len(photos)}"
         else:
-            file_buffer = create_docx(photos_data)
+            file_buffer = create_docx(photos)
             file_name = "photos.docx"
-            caption = f"📝 Ваш DOCX файл готов!\nСтраниц: {len(photos_data)}"
+            caption = f"📝 Ваш DOCX файл готов!\nСтраниц: {len(photos)}"
 
         bot.send_document(
             message.chat.id,
@@ -125,12 +107,10 @@ def create_document(message):
         )
 
         user_sessions[user_id]['photos'] = []
-        user_sessions[user_id]['photo_counter'] = 0  # Сбрасываем счетчик
 
     except Exception as e:
         bot.reply_to(message, f"❌ Ошибка при создании документа: {e}")
 
-# Остальные функции остаются без изменений
 def create_pdf(photos_bytes):
     images = []
     for photo_bytes in photos_bytes:
@@ -207,7 +187,6 @@ def clear_photos(message):
     if user_id in user_sessions and user_sessions[user_id]['photos']:
         count = len(user_sessions[user_id]['photos'])
         user_sessions[user_id]['photos'] = []
-        user_sessions[user_id]['photo_counter'] = 0  # Сбрасываем счетчик
         bot.reply_to(message, f"🗑️ Удалено {count} фото")
     else:
         bot.reply_to(message, "ℹ️ Нет фото для очистки")
@@ -224,23 +203,7 @@ def show_status(message):
     else:
         bot.reply_to(message, "ℹ️ Начни с /start")
 
-# Добавляем обработчик для кнопок формата
-@bot.message_handler(func=lambda message: message.text in ['📄 PDF', '📝 DOCX'])
-def handle_format_buttons(message):
-    user_id = message.from_user.id
-    if user_id not in user_sessions:
-        user_sessions[user_id] = {'photos': [], 'format': 'pdf', 'photo_counter': 0}
-    
-    if message.text == '📄 PDF':
-        user_sessions[user_id]['format'] = 'pdf'
-        format_name = "PDF"
-    else:
-        user_sessions[user_id]['format'] = 'docx'
-        format_name = "DOCX"
-    
-    bot.reply_to(message, f"✅ Формат изменен на {format_name}")
-
-# Flask маршруты для Railway (без изменений)
+# Flask маршруты для Railway
 @app.route('/')
 def home():
     return "🤖 Telegram Bot is running! Use /start in Telegram."
@@ -255,9 +218,10 @@ def webhook():
     else:
         return 'Invalid content type', 403
 
-# Функция для установки вебхука (без изменений)
+# Функция для установки вебхука
 def set_webhook():
     try:
+        # Получаем URL приложения из переменных окружения Railway
         railway_url = os.environ.get('RAILWAY_STATIC_URL')
         if railway_url:
             webhook_url = f"{railway_url}/webhook"
@@ -266,6 +230,7 @@ def set_webhook():
             print(f"✅ Webhook установлен: {webhook_url}")
         else:
             print("ℹ️ RAILWAY_STATIC_URL не найден, используем polling")
+            # Запускаем polling в отдельном потоке
             threading.Thread(target=run_polling, daemon=True).start()
     except Exception as e:
         print(f"❌ Ошибка установки webhook: {e}")
@@ -278,11 +243,16 @@ def run_polling():
     except Exception as e:
         print(f"❌ Ошибка в polling: {e}")
 
-# При запуске приложения (без изменений)
+# При запуске приложения
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"🚀 Starting server on port {port}")
+    
+    # Пытаемся установить вебхук
     set_webhook()
+    
+    # Запускаем Flask
     app.run(host='0.0.0.0', port=port)
 else:
-    set_webhook()
+    # Для запуска через Gunicorn
+    set_webhook() 
