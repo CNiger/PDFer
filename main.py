@@ -15,7 +15,7 @@ bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 user_sessions = {}
 
-# Ваши существующие функции (без изменений)
+# --------------------- START ---------------------
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
@@ -41,6 +41,7 @@ def start(message):
         reply_markup=markup
     )
 
+# --------------------- HELP ---------------------
 @bot.message_handler(commands=['help'])
 def help_cmd(message):
     help_text = """
@@ -55,6 +56,7 @@ def help_cmd(message):
 """
     bot.send_message(message.chat.id, help_text)
 
+# --------------------- ПРИЁМ ФОТО ---------------------
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     user_id = message.from_user.id
@@ -65,7 +67,12 @@ def handle_photo(message):
     file_info = bot.get_file(message.photo[-1].file_id)
     downloaded_file = bot.download_file(file_info.file_path)
 
-    user_sessions[user_id]['photos'].append(downloaded_file)
+    # --- ВАЖНО: сохраняем фото с message_id ---
+    user_sessions[user_id]['photos'].append({
+        'msg_id': message.message_id,
+        'data': downloaded_file
+    })
+
     count = len(user_sessions[user_id]['photos'])
     format_name = "PDF" if user_sessions[user_id]['format'] == 'pdf' else "DOCX"
 
@@ -76,6 +83,7 @@ def handle_photo(message):
         f"Отправьте ещё фото или /create для создания документа"
     )
 
+# --------------------- CREATE ---------------------
 @bot.message_handler(commands=['create'])
 def create_document(message):
     user_id = message.from_user.id
@@ -88,16 +96,19 @@ def create_document(message):
         bot.send_message(message.chat.id, "🔄 Создаю документ...")
 
         format_type = user_sessions[user_id]['format']
-        photos = user_sessions[user_id]['photos']
+
+        # --- ВАЖНО: СОРТИРУЕМ ФОТО ПО message_id ---
+        photos_sorted = sorted(user_sessions[user_id]['photos'], key=lambda x: x['msg_id'])
+        photos_bytes = [p['data'] for p in photos_sorted]
 
         if format_type == 'pdf':
-            file_buffer = create_pdf(photos)
+            file_buffer = create_pdf(photos_bytes)
             file_name = "photos.pdf"
-            caption = f"📄 Ваш PDF файл готов!\nСтраниц: {len(photos)}"
+            caption = f"📄 Ваш PDF файл готов!\nСтраниц: {len(photos_bytes)}"
         else:
-            file_buffer = create_docx(photos)
+            file_buffer = create_docx(photos_bytes)
             file_name = "photos.docx"
-            caption = f"📝 Ваш DOCX файл готов!\nСтраниц: {len(photos)}"
+            caption = f"📝 Ваш DOCX файл готов!\nСтраниц: {len(photos_bytes)}"
 
         bot.send_document(
             message.chat.id,
@@ -111,6 +122,7 @@ def create_document(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Ошибка при создании документа: {e}")
 
+# --------------------- PDF ---------------------
 def create_pdf(photos_bytes):
     images = []
     for photo_bytes in photos_bytes:
@@ -137,6 +149,7 @@ def create_pdf(photos_bytes):
     pdf_buffer.seek(0)
     return pdf_buffer
 
+# --------------------- DOCX ---------------------
 def create_docx(photos_bytes):
     doc = Document()
     sections = doc.sections
@@ -181,6 +194,7 @@ def create_docx(photos_bytes):
     doc_buffer.seek(0)
     return doc_buffer
 
+# --------------------- CLEAR ---------------------
 @bot.message_handler(commands=['clear'])
 def clear_photos(message):
     user_id = message.from_user.id
@@ -191,6 +205,7 @@ def clear_photos(message):
     else:
         bot.reply_to(message, "ℹ️ Нет фото для очистки")
 
+# --------------------- STATUS ---------------------
 @bot.message_handler(commands=['status'])
 def show_status(message):
     user_id = message.from_user.id
@@ -203,7 +218,7 @@ def show_status(message):
     else:
         bot.reply_to(message, "ℹ️ Начни с /start")
 
-# Flask маршруты для Railway
+# --------------------- FLASK & WEBHOOK ---------------------
 @app.route('/')
 def home():
     return "🤖 Telegram Bot is running! Use /start in Telegram."
@@ -218,10 +233,8 @@ def webhook():
     else:
         return 'Invalid content type', 403
 
-# Функция для установки вебхука
 def set_webhook():
     try:
-        # Получаем URL приложения из переменных окружения Railway
         railway_url = os.environ.get('RAILWAY_STATIC_URL')
         if railway_url:
             webhook_url = f"{railway_url}/webhook"
@@ -230,7 +243,6 @@ def set_webhook():
             print(f"✅ Webhook установлен: {webhook_url}")
         else:
             print("ℹ️ RAILWAY_STATIC_URL не найден, используем polling")
-            # Запускаем polling в отдельном потоке
             threading.Thread(target=run_polling, daemon=True).start()
     except Exception as e:
         print(f"❌ Ошибка установки webhook: {e}")
@@ -243,16 +255,11 @@ def run_polling():
     except Exception as e:
         print(f"❌ Ошибка в polling: {e}")
 
-# При запуске приложения
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"🚀 Starting server on port {port}")
-    
-    # Пытаемся установить вебхук
     set_webhook()
-    
-    # Запускаем Flask
     app.run(host='0.0.0.0', port=port)
 else:
-    # Для запуска через Gunicorn
-    set_webhook() 
+    set_webhook()
+
